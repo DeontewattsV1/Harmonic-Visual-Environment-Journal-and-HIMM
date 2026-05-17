@@ -1,0 +1,151 @@
+name: Harmonic Visual Journal Pages
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "index.html"
+      - "assets/**"
+      - "content/**"
+      - ".github/workflows/main.yml"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate journal artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify required files
+        run: |
+          set -e
+          test -f index.html || (echo "::error::Missing index.html" && exit 1)
+          test -f assets/journal.pdf || (echo "::error::Missing assets/journal.pdf" && exit 1)
+          test -f assets/styles.css || (echo "::error::Missing assets/styles.css" && exit 1)
+          test -f README.md || (echo "::error::Missing README.md" && exit 1)
+          echo "All required files present."
+
+      - name: Verify PDF integrity
+        run: |
+          head -c 5 assets/journal.pdf | grep -q "%PDF-" \
+            && echo "PDF header valid" \
+            || (echo "::error::PDF header invalid" && exit 1)
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Lint HTML
+        run: |
+          npm install --no-save html-validate@8.18.2
+          npx html-validate index.html || echo "::warning::html-validate flagged issues"
+
+      - name: Verify content markdown renders
+        if: hashFiles('content/*.md') != ''
+        run: |
+          npm install --no-save marked@12.0.2
+          node <<'EOF'
+          const fs = require('fs');
+          const { marked } = require('marked');
+          let failed = 0;
+
+          for (const f of fs.readdirSync('content').filter(x => x.endsWith('.md'))) {
+            try {
+              marked.parse(fs.readFileSync('content/' + f, 'utf8'));
+              console.log(`OK ${f}`);
+            } catch (e) {
+              console.error(`FAIL ${f}: ${e.message}`);
+              failed++;
+            }
+          }
+
+          process.exit(failed > 0 ? 1 : 0);
+          EOF
+
+  build:
+    name: Build journal site
+    needs: validate
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install markdown renderer
+        run: npm install --no-save marked@12.0.2
+
+      - name: Render journal markdown sections to HTML fragments
+        run: |
+          mkdir -p _site/content
+          node <<'EOF'
+          const fs = require('fs');
+          const path = require('path');
+          const { marked } = require('marked');
+
+          const contentDir = 'content';
+          const outDir = '_site/content';
+
+          if (!fs.existsSync(contentDir)) {
+            console.log('No content/ directory, skipping markdown render.');
+            process.exit(0);
+          }
+
+          for (const file of fs.readdirSync(contentDir)) {
+            if (!file.endsWith('.md')) continue;
+
+            const md = fs.readFileSync(path.join(contentDir, file), 'utf8');
+            const html = marked.parse(md);
+            const outFile = file.replace(/\.md$/, '.html');
+
+            fs.writeFileSync(path.join(outDir, outFile), html);
+            console.log(`rendered ${file} -> ${outFile}`);
+          }
+          EOF
+
+      - name: Stage static site
+        run: |
+          mkdir -p _site
+          cp index.html _site/index.html
+          cp -r assets _site/assets
+          test -f _site/assets/journal.pdf && echo "PDF staged" || (echo "Missing PDF" && exit 1)
+          ls -la _site/
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
