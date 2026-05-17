@@ -1,0 +1,14 @@
+title: Harmonic Visual Environment Journal & HIMM
+description: >-
+  A 30-Day Open-Science Field Notebook and Quantitative Framework
+  for Affirmation, Sound, Behavior, Evidence, and Aligned Action
+baseurl: ""
+url: ""
+
+markdown: kramdown
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor
