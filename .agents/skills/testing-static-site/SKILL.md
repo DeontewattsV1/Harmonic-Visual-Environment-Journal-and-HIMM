@@ -13,7 +13,7 @@ description: Test the Harmonic Visual Environment Journal static site end-to-end
 
 1. Open `index.html` in Chrome:
    ```
-   google-chrome file:///path/to/repo/index.html
+   google-chrome 
    ```
 
 2. Verify these sections render:
